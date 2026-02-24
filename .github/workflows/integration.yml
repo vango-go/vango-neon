@@ -1,0 +1,78 @@
+name: integration
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "*.go"
+      - "go.mod"
+      - "go.sum"
+      - "README.md"
+      - ".github/workflows/integration.yml"
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    env:
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+      NEON_ROLE_NAME: ${{ vars.NEON_ROLE_NAME || 'neondb_owner' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Neon CLI
+        run: |
+          npm i -g neonctl
+          neon --version
+
+      - name: Create ephemeral Neon branch
+        id: neon
+        run: |
+          BRANCH="ci-${{ github.run_id }}-${{ github.run_attempt }}"
+          neon branches create "$BRANCH" \
+            --project-id "$NEON_PROJECT_ID" \
+            --output json > /tmp/branch.json
+
+          echo "branch_name=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "branch_id=$(jq -r '.id' /tmp/branch.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch pooled and direct connection strings
+        run: |
+          CS=$(neon connection-string "${{ steps.neon.outputs.branch_name }}" \
+            --project-id "$NEON_PROJECT_ID" \
+            --role-name "$NEON_ROLE_NAME" \
+            --pooled 2>/dev/null)
+
+          CS_DIRECT=$(neon connection-string "${{ steps.neon.outputs.branch_name }}" \
+            --project-id "$NEON_PROJECT_ID" \
+            --role-name "$NEON_ROLE_NAME" 2>/dev/null)
+
+          if [ -z "$CS" ] || [ -z "$CS_DIRECT" ]; then
+            echo "::error::failed to obtain Neon connection strings"
+            exit 1
+          fi
+
+          {
+            echo "DATABASE_URL=$CS"
+            echo "DATABASE_URL_DIRECT=$CS_DIRECT"
+          } >> "$GITHUB_ENV"
+
+      - name: Run integration tests
+        run: go test -tags=integration -race ./...
+
+      - name: Cleanup Neon branch
+        if: always()
+        run: |
+          neon branches delete "${{ steps.neon.outputs.branch_id }}" \
+            --project-id "$NEON_PROJECT_ID" 2>/dev/null || true

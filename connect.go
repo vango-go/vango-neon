@@ -20,6 +20,10 @@ type connectOptions struct {
 	pgxConfigModifier func(*pgxpool.Config)
 }
 
+// newPoolWithConfig is a package-private seam used by tests to force
+// deterministic pool-construction failures without network dependencies.
+var newPoolWithConfig = pgxpool.NewWithConfig
+
 // WithPgxConfig allows low-level pgxpool configuration.
 //
 // The modifier runs after standard vango-neon configuration is applied.
@@ -48,6 +52,8 @@ func Connect(ctx context.Context, cfg Config, opts ...Option) (*Pool, error) {
 
 	pgxCfg, err := pgxpool.ParseConfig(cfg.ConnectionString)
 	if err != nil {
+		// SECURITY: parse errors from upstream may contain DSN content.
+		// Keep the outer error message sanitized.
 		return nil, errors.New("neon: invalid connection string (expected URL form)")
 	}
 
@@ -125,8 +131,9 @@ func Connect(ctx context.Context, cfg Config, opts ...Option) (*Pool, error) {
 		o.pgxConfigModifier(pgxCfg)
 	}
 
-	pool, err := pgxpool.NewWithConfig(ctx, pgxCfg)
+	pool, err := newPoolWithConfig(ctx, pgxCfg)
 	if err != nil {
+		// SECURITY: cause may include sensitive details; keep outer error safe.
 		return nil, &SafeError{
 			msg:   fmt.Sprintf("neon: failed to create pool (host=%s)", host),
 			cause: err,

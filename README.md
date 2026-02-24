@@ -49,6 +49,8 @@ label.
 - `Connect` rejects plaintext-capable settings (`sslmode=allow` / `sslmode=prefer`).
 - `Connect` requires TLS (`sslmode=require` or stricter).
 - public error strings are safe to log by default and avoid DSN credential leakage.
+- `SafeError.Unwrap()` may contain sensitive upstream detail; do not log wrapped
+  cause chains verbatim in production defaults.
 - `Pool.DirectURL()` returns credentials and must be treated as secret material.
 
 ## Tracing and advanced pgx options

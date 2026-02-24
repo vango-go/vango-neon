@@ -16,9 +16,10 @@ func TestConnect_RequiresConnectionString(t *testing.T) {
 	if got, want := err.Error(), "neon: ConnectionString is required"; got != want {
 		t.Fatalf("error=%q, want %q", got, want)
 	}
+	assertNoDSNLeak(t, err.Error())
 }
 
-func TestConnect_InvalidConnectionString_IsSanitized(t *testing.T) {
+func TestConnect_InvalidConnectionString_IsSafeAndNoLeak(t *testing.T) {
 	t.Parallel()
 
 	_, err := Connect(context.Background(), Config{
@@ -30,10 +31,10 @@ func TestConnect_InvalidConnectionString_IsSanitized(t *testing.T) {
 	if got, want := err.Error(), "neon: invalid connection string (expected URL form)"; got != want {
 		t.Fatalf("error=%q, want %q", got, want)
 	}
-	assertNoSensitiveErrorContent(t, err.Error())
+	assertNoDSNLeak(t, err.Error())
 }
 
-func TestConnect_RejectsInsecureTLSConfig(t *testing.T) {
+func TestConnect_RejectsInsecureTLS_NoLeak(t *testing.T) {
 	t.Parallel()
 
 	_, err := Connect(context.Background(), Config{
@@ -45,9 +46,10 @@ func TestConnect_RejectsInsecureTLSConfig(t *testing.T) {
 	if !strings.Contains(err.Error(), "insecure connection rejected") {
 		t.Fatalf("expected insecure rejection, got: %v", err)
 	}
+	assertNoDSNLeak(t, err.Error())
 }
 
-func TestConnect_RejectsPlaintextFallbackModes(t *testing.T) {
+func TestConnect_RejectsPlaintextFallback_NoLeak(t *testing.T) {
 	t.Parallel()
 
 	_, err := Connect(context.Background(), Config{
@@ -59,17 +61,20 @@ func TestConnect_RejectsPlaintextFallbackModes(t *testing.T) {
 	if !strings.Contains(err.Error(), "sslmode=allow/prefer") {
 		t.Fatalf("expected fallback rejection, got: %v", err)
 	}
+	assertNoDSNLeak(t, err.Error())
 }
 
-func assertNoSensitiveErrorContent(t *testing.T, s string) {
-	t.Helper()
+func TestConnect_DirectURLDerivationFailure_NoLeak(t *testing.T) {
+	t.Parallel()
 
-	for _, marker := range []string{"postgres://", "postgresql://", "password="} {
-		if strings.Contains(strings.ToLower(s), marker) {
-			t.Fatalf("error leaked sensitive marker %q: %q", marker, s)
-		}
+	_, err := Connect(context.Background(), Config{
+		ConnectionString: "host=ep-demo-pooler.us-east-2.aws.neon.tech user=user password=supersecret dbname=neondb sslmode=require",
+	})
+	if err == nil {
+		t.Fatal("expected error")
 	}
-	if strings.Contains(s, "@") {
-		t.Fatalf("error unexpectedly contains '@' authority marker: %q", s)
+	if !strings.Contains(err.Error(), "not URL-form parseable") {
+		t.Fatalf("expected direct-url derivation error, got: %v", err)
 	}
+	assertNoDSNLeak(t, err.Error())
 }

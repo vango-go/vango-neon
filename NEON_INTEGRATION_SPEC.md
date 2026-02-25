@@ -154,6 +154,8 @@ have a documented fallback path.
 - `github.com/jackc/pgx/v5/pgconn`
 - `github.com/jackc/pgx/v5/pgxpool`
 
+**Toolchain:** Go 1.24+ (current `pgx/v5` dependency pin requires Go 1.24.0)
+
 ---
 
 ## 1.1 The `DB` Interface
@@ -1817,7 +1819,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.24.x"
 
       - name: Install tools
         run: |

@@ -54,7 +54,7 @@ func Connect(ctx context.Context, cfg Config, opts ...Option) (*Pool, error) {
 	if err != nil {
 		// SECURITY: parse errors from upstream may contain DSN content.
 		// Keep the outer error message sanitized.
-		return nil, errors.New("neon: invalid connection string (expected URL form)")
+		return nil, errors.New("neon: invalid connection string (expected URL form: postgresql://user:pass@host/db?... )")
 	}
 
 	if pgxCfg.ConnConfig.TLSConfig == nil {

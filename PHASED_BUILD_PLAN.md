@@ -74,7 +74,7 @@ This plan is intentionally “maximally thorough”: it includes repository scaf
    - every PR includes test evidence section
    - no credential-bearing logs in CI output
 8. Declare toolchain support:
-   - set `go` directive in `go.mod` (match Vango core; currently Vango CI examples use Go 1.22)
+   - set `go` directive in `go.mod` to the minimum supported version for this module (currently Go 1.24, constrained by the pinned `pgx/v5` dependency)
    - ensure CI uses the same Go version(s)
 9. (Optional, but recommended if publishing) Add governance files:
    - `LICENSE` (align with Vango org policy)

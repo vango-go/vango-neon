@@ -28,7 +28,7 @@ func TestConnect_InvalidConnectionString_IsSafeAndNoLeak(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if got, want := err.Error(), "neon: invalid connection string (expected URL form)"; got != want {
+	if got, want := err.Error(), "neon: invalid connection string (expected URL form: postgresql://user:pass@host/db?... )"; got != want {
 		t.Fatalf("error=%q, want %q", got, want)
 	}
 	assertNoDSNLeak(t, err.Error())

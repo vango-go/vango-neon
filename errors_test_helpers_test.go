@@ -13,12 +13,18 @@ func assertNoDSNLeak(t *testing.T, msg string) {
 	t.Helper()
 
 	lower := strings.ToLower(msg)
+	for _, placeholder := range []string{
+		"postgresql://user:pass@host/db?...",
+		"postgres://user:pass@host/db?...",
+	} {
+		lower = strings.ReplaceAll(lower, placeholder, "")
+	}
 	for _, marker := range []string{"postgres://", "postgresql://", "password="} {
 		if strings.Contains(lower, marker) {
 			t.Fatalf("error leaked sensitive marker %q: %q", marker, msg)
 		}
 	}
-	if dsnAuthorityPattern.MatchString(msg) {
+	if dsnAuthorityPattern.MatchString(lower) {
 		t.Fatalf("error leaked DSN authority info: %q", msg)
 	}
 }

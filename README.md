@@ -17,6 +17,10 @@ It provides:
 go get github.com/vango-go/vango-neon
 ```
 
+## Requirements
+
+- Go 1.24+ (the current `github.com/jackc/pgx/v5` pin, `v5.8.0`, requires Go 1.24.0)
+
 ## Environment setup (dual URL)
 
 Use two connection strings:

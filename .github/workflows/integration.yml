@@ -8,6 +8,9 @@ on:
       - "go.mod"
       - "go.sum"
       - "README.md"
+      - "NEON_INTEGRATION_SPEC.md"
+      - "PHASED_BUILD_PLAN.md"
+      - "scripts/check-go-version-parity.sh"
       - ".github/workflows/integration.yml"
 
 jobs:
@@ -25,6 +28,9 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.24.x"
+
+      - name: Check Go version parity
+        run: bash scripts/check-go-version-parity.sh
 
       - name: Setup Node
         uses: actions/setup-node@v4

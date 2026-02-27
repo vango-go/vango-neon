@@ -74,15 +74,15 @@ func Connect(ctx context.Context, cfg Config, opts ...Option) (*Pool, error) {
 		}
 	}
 
-	host := pgxCfg.ConnConfig.Host
-	isPooler := cfg.ForcePoolerMode || isNeonPoolerHost(host)
+	parsedHost := pgxCfg.ConnConfig.Host
+	isPooler := cfg.ForcePoolerMode || isNeonPoolerHost(parsedHost)
 	if isPooler {
 		pgxCfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 		pgxCfg.ConnConfig.StatementCacheCapacity = 0
 		pgxCfg.ConnConfig.DescriptionCacheCapacity = 0
 	}
 
-	directURL, err := resolveDirectURL(cfg, host)
+	directURL, err := resolveDirectURL(cfg, parsedHost)
 	if err != nil {
 		return nil, err
 	}
@@ -131,11 +131,13 @@ func Connect(ctx context.Context, cfg Config, opts ...Option) (*Pool, error) {
 		o.pgxConfigModifier(pgxCfg)
 	}
 
+	effectiveHost := pgxCfg.ConnConfig.Host
+
 	pool, err := newPoolWithConfig(ctx, pgxCfg)
 	if err != nil {
 		// SECURITY: cause may include sensitive details; keep outer error safe.
 		return nil, &SafeError{
-			msg:   fmt.Sprintf("neon: failed to create pool (host=%s)", host),
+			msg:   fmt.Sprintf("neon: failed to create pool (host=%s)", effectiveHost),
 			cause: err,
 		}
 	}
@@ -143,7 +145,7 @@ func Connect(ctx context.Context, cfg Config, opts ...Option) (*Pool, error) {
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
 		return nil, &SafeError{
-			msg:   fmt.Sprintf("neon: initial ping failed (host=%s, is your Neon compute active?)", host),
+			msg:   fmt.Sprintf("neon: initial ping failed (host=%s, is your Neon compute active?)", effectiveHost),
 			cause: err,
 		}
 	}

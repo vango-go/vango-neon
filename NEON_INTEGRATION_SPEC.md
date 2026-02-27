@@ -32,6 +32,22 @@
 
 All code targets `pgx` v5 types. AI agents can treat all type signatures as authoritative.
 
+### Scope Clarification (This Repo vs Vango Core)
+
+This specification includes:
+
+- **Part 1**, which is the authoritative contract for the `github.com/vango-go/vango-neon`
+  package itself (what this repository implements).
+- Additional **developer guidance** and **future/adjacent work** sections that
+  reference Vango runtime behavior (consumer-side production logging policy)
+  and Vango CLI/tooling (e.g. `vango neon ...` commands).
+
+Those runtime/CLI items are intentionally **out of scope for this package** and
+belong to the Vango core repository (`github.com/vango-go/vango`) and its CLI.
+`vango-neon`’s responsibility is to produce safe-by-default outer errors and a
+Neon-optimized pgx pool; the runtime decides how/when to stringify/unwrap
+errors in production logs.
+
 ---
 
 ## Design Invariants (v2.0, Non-Negotiable)

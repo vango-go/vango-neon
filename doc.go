@@ -4,6 +4,15 @@
 // The package is framework-adjacent but framework-independent: it does not
 // import github.com/vango-go/vango and can be used in plain Go services.
 //
+// Scope note:
+//   - This module is the *library layer* (producer): it returns safe-by-default
+//     outer errors and provides Neon-oriented connection/migration ergonomics.
+//   - Vango runtime production logging policy (consumer-side suppression of
+//     error chains) and any Vango CLI work (scaffolding / `vango neon ...`
+//     commands) are intentionally out of scope for this package, even if they
+//     are referenced in the integration spec as ecosystem guidance or future
+//     work.
+//
 // Core API:
 //   - DB: application-facing data access contract
 //   - Config + Connect: Neon-oriented connection and pool setup

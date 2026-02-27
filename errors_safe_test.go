@@ -53,6 +53,36 @@ func TestConnect_PoolCreationFailure_ReturnsSafeErrorAndWrapsCause(t *testing.T)
 	assertNoDSNLeak(t, err.Error())
 }
 
+func TestConnect_PoolCreationFailure_UsesEffectiveHostInSafeError(t *testing.T) {
+	cause := errors.New("constructor failed for postgresql://user:supersecret@bad.example.com/neondb")
+
+	original := newPoolWithConfig
+	newPoolWithConfig = func(_ context.Context, cfg *pgxpool.Config) (*pgxpool.Pool, error) {
+		if got, want := cfg.ConnConfig.Host, "override.example.com"; got != want {
+			t.Fatalf("pool construction saw host=%q, want %q", got, want)
+		}
+		return nil, cause
+	}
+	t.Cleanup(func() {
+		newPoolWithConfig = original
+	})
+
+	_, err := Connect(context.Background(), Config{
+		ConnectionString: "postgresql://user:pass@ep-demo.us-east-2.aws.neon.tech/neondb?sslmode=require",
+	}, WithPgxConfig(func(c *pgxpool.Config) {
+		c.ConnConfig.Host = "override.example.com"
+	}))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	if !strings.Contains(err.Error(), "neon: failed to create pool (host=override.example.com)") {
+		t.Fatalf("unexpected outer error: %q", err.Error())
+	}
+	assertSafeErrorWraps(t, err, cause)
+	assertNoDSNLeak(t, err.Error())
+}
+
 func TestConnect_PingFailure_ReturnsSafeErrorAndWrapsCause(t *testing.T) {
 	t.Parallel()
 
@@ -70,6 +100,30 @@ func TestConnect_PingFailure_ReturnsSafeErrorAndWrapsCause(t *testing.T) {
 	}
 
 	if !strings.Contains(err.Error(), "neon: initial ping failed") {
+		t.Fatalf("unexpected outer error: %q", err.Error())
+	}
+	assertSafeErrorWraps(t, err, cause)
+	assertNoDSNLeak(t, err.Error())
+}
+
+func TestConnect_PingFailure_UsesEffectiveHostInSafeError(t *testing.T) {
+	t.Parallel()
+
+	cause := errors.New("dial failed for postgresql://user:supersecret@bad.example.com/neondb")
+
+	_, err := Connect(context.Background(), Config{
+		ConnectionString: "postgresql://user:supersecret@ep-demo-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require",
+	}, WithPgxConfig(func(c *pgxpool.Config) {
+		c.ConnConfig.Host = "override.example.com"
+		c.BeforeConnect = func(_ context.Context, _ *pgx.ConnConfig) error {
+			return cause
+		}
+	}))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	if !strings.Contains(err.Error(), "neon: initial ping failed (host=override.example.com") {
 		t.Fatalf("unexpected outer error: %q", err.Error())
 	}
 	assertSafeErrorWraps(t, err, cause)

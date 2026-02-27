@@ -2,6 +2,26 @@
 
 `vango-neon` is the Neon PostgreSQL integration package for Vango applications.
 
+## Scope (What This Repo Does / Does Not Do)
+
+This repository implements the **`github.com/vango-go/vango-neon` Go package**
+only: a production-hardened Neon/pgx integration layer that is safe-by-default
+around secrets and migrations.
+
+Out of scope for `vango-neon` (even if mentioned in the spec as ecosystem
+guidance or future work):
+
+- **Vango runtime production logging policy** (for example, debug vs prod error
+  chain printing / suppression): this belongs to the **Vango runtime** (the
+  consumer of errors), not this package (the producer of safe outer errors).
+- **Vango CLI work** (for example, `vango neon ...` subcommands, scaffolding,
+  or `neonctl` integration): this belongs to the **Vango CLI/tooling repo**,
+  not this library.
+
+See `/Users/collinshill/Documents/vango/vango-neon/PHASED_BUILD_PLAN.md` for an
+explicit in-scope/out-of-scope breakdown and `/Users/collinshill/Documents/vango/vango-neon/NEON_INTEGRATION_SPEC.md`
+for the full contract reference.
+
 It provides:
 - a `DB` interface for dependency injection in services and route dependencies
 - a concrete `Pool` implementation backed by `pgxpool`
@@ -36,6 +56,14 @@ DATABASE_URL_DIRECT="postgresql://user:pass@ep-name.us-east-2.aws.neon.tech/neon
 If `DirectURL` is empty and `ConnectionString` is a Neon pooled URL in URL form,
 `vango-neon` derives the direct URL by removing `-pooler` from the first hostname
 label. Non-Neon hostnames are never rewritten.
+
+Compatibility note: if you encounter connection issues in a constrained
+environment, remove `channel_binding=require` first and keep
+`sslmode=require` (or stricter). Channel binding is hardening; TLS is the
+requirement.
+
+For additional hardening in production, upgrade to `sslmode=verify-full`
+(requires providing a trusted Neon CA certificate via libpq/pgx mechanisms).
 
 ## Quickstart (connect and inject)
 
@@ -169,6 +197,8 @@ CI:
 
 - `Connect` rejects plaintext-capable TLS modes (`sslmode=allow` / `sslmode=prefer`).
 - `Connect` requires TLS (`sslmode=require` or stricter).
+- `channel_binding=require` is recommended hardening; remove it first if you
+  hit connectivity issues, but keep `sslmode=require` (or stricter).
 - Public outer errors are safe to log by default and avoid credential-bearing DSN output.
 - `SafeError.Unwrap()` may contain sensitive upstream detail; avoid logging full chains in production defaults.
 - Connection strings and `Pool.DirectURL()` are secrets. Do not print or commit them.
@@ -177,3 +207,7 @@ CI:
 
 See [NEON_INTEGRATION_SPEC.md](./NEON_INTEGRATION_SPEC.md) for the full
 package contract and invariants.
+
+For a step-by-step integration walkthrough (Vango scaffolding, dotenv behavior,
+migrations, branch workflows, security posture), see
+[DEVELOPER_GUIDE.md](./DEVELOPER_GUIDE.md).

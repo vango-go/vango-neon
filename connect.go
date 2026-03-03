@@ -13,6 +13,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const (
+	defaultHealthCheckPeriod  = 30 * time.Second
+	defaultMaxConnLifetime    = 30 * time.Minute
+	defaultMaxConnIdleTime    = 5 * time.Minute
+	defaultConnectTimeout     = 10 * time.Second
+	disabledHealthCheckPeriod = 100 * 365 * 24 * time.Hour
+)
+
 // Option configures Connect for advanced use cases.
 type Option func(*connectOptions)
 
@@ -44,6 +52,47 @@ func isNeonPoolerHost(host string) bool {
 	return strings.HasSuffix(firstLabel, "-pooler")
 }
 
+func validateTLSPosture(source string, connCfg *pgx.ConnConfig) error {
+	if connCfg.TLSConfig == nil {
+		return fmt.Errorf(
+			"neon: insecure connection rejected. %s must include sslmode=require (or stricter). "+
+				"Recommended: sslmode=require&channel_binding=require",
+			source,
+		)
+	}
+
+	for _, fb := range connCfg.Fallbacks {
+		if fb.TLSConfig == nil {
+			return fmt.Errorf(
+				"neon: insecure connection rejected. %s uses sslmode=allow/prefer semantics, "+
+					"which are not permitted (plaintext fallback). "+
+					"Use sslmode=require, sslmode=verify-ca, or sslmode=verify-full.",
+				source,
+			)
+		}
+	}
+
+	return nil
+}
+
+func validateResolvedDirectURL(directURL string) error {
+	directCfg, err := pgxpool.ParseConfig(directURL)
+	if err != nil {
+		// SECURITY: do not forward parse errors that may include the direct DSN.
+		return errors.New(
+			"neon: invalid DirectURL (must be a valid pgx DSN with sslmode=require or stricter)",
+		)
+	}
+
+	if isNeonPoolerHost(directCfg.ConnConfig.Host) {
+		return errors.New(
+			`neon: DirectURL must be a direct (non-pooled) Neon endpoint (hostname must not include "-pooler")`,
+		)
+	}
+
+	return validateTLSPosture("DirectURL", directCfg.ConnConfig)
+}
+
 // Connect creates a production-hardened Neon connection pool.
 func Connect(ctx context.Context, cfg Config, opts ...Option) (*Pool, error) {
 	if cfg.ConnectionString == "" {
@@ -57,21 +106,8 @@ func Connect(ctx context.Context, cfg Config, opts ...Option) (*Pool, error) {
 		return nil, errors.New("neon: invalid connection string (expected URL form: postgresql://user:pass@host/db?... )")
 	}
 
-	if pgxCfg.ConnConfig.TLSConfig == nil {
-		return nil, errors.New(
-			"neon: insecure connection rejected. " +
-				"Connection string must include sslmode=require (or stricter). " +
-				"Recommended: sslmode=require&channel_binding=require",
-		)
-	}
-	for _, fb := range pgxCfg.ConnConfig.Fallbacks {
-		if fb.TLSConfig == nil {
-			return nil, errors.New(
-				"neon: insecure connection rejected. " +
-					"sslmode=allow/prefer is not permitted (plaintext fallback). " +
-					"Use sslmode=require, sslmode=verify-ca, or sslmode=verify-full.",
-			)
-		}
+	if err := validateTLSPosture("ConnectionString", pgxCfg.ConnConfig); err != nil {
+		return nil, err
 	}
 
 	parsedHost := pgxCfg.ConnConfig.Host
@@ -86,6 +122,9 @@ func Connect(ctx context.Context, cfg Config, opts ...Option) (*Pool, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := validateResolvedDirectURL(directURL); err != nil {
+		return nil, err
+	}
 
 	if cfg.MaxConns > 0 {
 		pgxCfg.MaxConns = cfg.MaxConns
@@ -95,29 +134,32 @@ func Connect(ctx context.Context, cfg Config, opts ...Option) (*Pool, error) {
 	pgxCfg.MinConns = cfg.MinConns
 
 	if cfg.HealthChecksDisabled {
-		pgxCfg.HealthCheckPeriod = 0
+		// pgxpool requires a strictly positive ticker interval; a zero period
+		// panics in backgroundHealthCheck. Use a very large positive duration to
+		// effectively disable periodic health checks without risking process crash.
+		pgxCfg.HealthCheckPeriod = disabledHealthCheckPeriod
 	} else if cfg.HealthCheckPeriod > 0 {
 		pgxCfg.HealthCheckPeriod = cfg.HealthCheckPeriod
 	} else {
-		pgxCfg.HealthCheckPeriod = 30 * time.Second
+		pgxCfg.HealthCheckPeriod = defaultHealthCheckPeriod
 	}
 
 	if cfg.MaxConnLifetime > 0 {
 		pgxCfg.MaxConnLifetime = cfg.MaxConnLifetime
 	} else {
-		pgxCfg.MaxConnLifetime = 30 * time.Minute
+		pgxCfg.MaxConnLifetime = defaultMaxConnLifetime
 	}
 
 	if cfg.MaxConnIdleTime > 0 {
 		pgxCfg.MaxConnIdleTime = cfg.MaxConnIdleTime
 	} else {
-		pgxCfg.MaxConnIdleTime = 5 * time.Minute
+		pgxCfg.MaxConnIdleTime = defaultMaxConnIdleTime
 	}
 
 	if cfg.ConnectTimeout > 0 {
 		pgxCfg.ConnConfig.ConnectTimeout = cfg.ConnectTimeout
 	} else {
-		pgxCfg.ConnConfig.ConnectTimeout = 10 * time.Second
+		pgxCfg.ConnConfig.ConnectTimeout = defaultConnectTimeout
 	}
 
 	var o connectOptions

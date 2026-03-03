@@ -1,6 +1,9 @@
 package neon
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestResolveDirectURL_UsesExplicitDirectURL(t *testing.T) {
 	t.Parallel()
@@ -53,4 +56,19 @@ func TestResolveDirectURL_FailsForUnrewritablePoolerHost(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
+}
+
+func TestValidateResolvedDirectURL_RejectsNeonPoolerHost(t *testing.T) {
+	t.Parallel()
+
+	err := validateResolvedDirectURL(
+		"postgresql://user:pass@ep-demo-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require",
+	)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "DirectURL must be a direct (non-pooled) Neon endpoint") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertNoDSNLeak(t, err.Error())
 }

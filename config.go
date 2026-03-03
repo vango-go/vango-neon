@@ -30,6 +30,12 @@ type Config struct {
 	// Format:
 	//   postgresql://user:pass@ep-name.region.aws.neon.tech/db?sslmode=require&channel_binding=require
 	//
+	// TLS is mandatory for DirectURL as well. It must include
+	// sslmode=require (or stricter). The package rejects DirectURL values
+	// that can fall back to plaintext, including sslmode=allow/prefer.
+	// For Neon endpoints, DirectURL must be non-pooled (hostname must not
+	// include "-pooler").
+	//
 	// If empty and ConnectionString is a Neon pooler URL (first hostname label
 	// ends with "-pooler" and suffix is ".neon.tech"), the package derives the
 	// direct URL by removing the "-pooler" suffix from the first label.
@@ -63,7 +69,9 @@ type Config struct {
 	// connections.
 	// Default: false.
 	//
-	// If true, HealthCheckPeriod is ignored.
+	// If true, HealthCheckPeriod is ignored and Connect uses an internal,
+	// very large positive interval to effectively disable periodic checks.
+	// This avoids pgxpool panicking on a non-positive ticker interval.
 	HealthChecksDisabled bool
 
 	// HealthCheckPeriod controls how often idle connections are health-checked.

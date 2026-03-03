@@ -73,8 +73,8 @@ DATABASE_URL_DIRECT="postgresql://user:pass@ep-name.us-east-2.aws.neon.tech/neon
 
 ### TLS defaults + compatibility fallback
 
-- `vango-neon` **rejects** any connection configuration that can fall back to plaintext (`sslmode=allow` / `sslmode=prefer` semantics).
-- Minimum accepted posture is `sslmode=require` (or stricter).
+- `vango-neon` **rejects** any connection configuration that can fall back to plaintext (`sslmode=allow` / `sslmode=prefer` semantics) for both `ConnectionString` and `DirectURL`.
+- Minimum accepted posture is `sslmode=require` (or stricter) for both `ConnectionString` and `DirectURL`.
 - Recommended hardening is `channel_binding=require`.
 
 If you encounter connection issues in a constrained environment:
@@ -91,6 +91,11 @@ If `DATABASE_URL_DIRECT` (or `Config.DirectURL`) is empty:
 - When `DATABASE_URL` is a Neon pooled URL **in URL form** (`postgres://` or `postgresql://`) and the hostname is `*.neon.tech` with a first label ending in `-pooler`, `vango-neon` derives a direct URL by removing the `-pooler` suffix from the first label.
 - If `DATABASE_URL` is a pooler hostname but is **not** URL-form parseable (e.g. keyword/value DSN format), `Connect` fails fast and requires an explicit direct URL to uphold the “direct-only migrations” invariant.
 - For non-pooler URLs, the pooled DSN is used as direct as well.
+
+If `DATABASE_URL_DIRECT` / `Config.DirectURL` is explicitly set, it is still
+validated under the same TLS-only rules before pool creation.
+For Neon hostnames, explicit `DATABASE_URL_DIRECT` must be non-pooled
+(`-pooler` endpoints fail fast).
 
 ---
 
@@ -189,8 +194,8 @@ Default behavior preserves already-set environment variables; use `--dotenv=over
 |---|---:|---|
 | `MaxConns` | `10` | Conservative default for serverless compute + proxy multiplexing. |
 | `MinConns` | `0` | Allows scale-to-zero. |
-| `HealthChecksDisabled` | `false` | Disable only if you have strong reasons. |
-| `HealthCheckPeriod` | `30s` | Ignored if health checks disabled. |
+| `HealthChecksDisabled` | `false` | Disable only if you have strong reasons. Internally this uses a very large positive interval (not `0`) so pgxpool does not panic on ticker creation. |
+| `HealthCheckPeriod` | `30s` | Ignored if health checks are disabled. |
 | `MaxConnLifetime` | `30m` | Rotates connections periodically. |
 | `MaxConnIdleTime` | `5m` | Closes long-idle connections. |
 | `ConnectTimeout` | `10s` | Helps with cold starts / scale-from-zero. |

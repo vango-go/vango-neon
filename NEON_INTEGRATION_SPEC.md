@@ -262,6 +262,12 @@ type Config struct {
 	// Format:
 	//   postgresql://user:pass@ep-name.region.aws.neon.tech/db?sslmode=require&channel_binding=require
 	//
+	// MUST include sslmode=require (or stricter). The package also validates
+	// DirectURL and rejects plaintext-capable modes (including
+	// sslmode=allow/prefer semantics).
+	// For Neon hostnames, DirectURL must be non-pooled (first label must
+	// not end with "-pooler").
+	//
 	// If empty AND ConnectionString is a Neon pooler URL (first hostname label
 	// ends with "-pooler" and suffix is ".neon.tech"), the package derives the
 	// direct URL by removing the "-pooler" suffix from the first label. This
@@ -303,7 +309,9 @@ type Config struct {
 	// connections.
 	// Default: false
 	//
-	// If true, HealthCheckPeriod is ignored.
+	// If true, HealthCheckPeriod is ignored and Connect uses an internal,
+	// very large positive interval to effectively disable periodic checks.
+	// This avoids pgxpool panicking on non-positive ticker intervals.
 	HealthChecksDisabled bool
 
 	// HealthCheckPeriod controls how often idle connections are health-checked.
@@ -433,26 +441,13 @@ func Connect(ctx context.Context, cfg Config, opts ...Option) (*Pool, error) {
 		)
 	}
 
-	// --- SSL Enforcement ---
+	// --- SSL Enforcement (ConnectionString) ---
 	//
 	// SECURITY: Reject any configuration that can fall back to plaintext.
 	// In pgx/libpq semantics, sslmode=allow/prefer are implemented via
 	// plaintext fallbacks (Fallbacks with nil TLSConfig).
-	if pgxCfg.ConnConfig.TLSConfig == nil {
-		return nil, errors.New(
-			"neon: insecure connection rejected. " +
-				"Connection string must include sslmode=require (or stricter). " +
-				"Recommended: sslmode=require&channel_binding=require",
-		)
-	}
-	for _, fb := range pgxCfg.ConnConfig.Fallbacks {
-		if fb.TLSConfig == nil {
-			return nil, errors.New(
-				"neon: insecure connection rejected. " +
-					"sslmode=allow/prefer is not permitted (plaintext fallback). " +
-					"Use sslmode=require, sslmode=verify-ca, or sslmode=verify-full.",
-			)
-		}
+	if err := validateTLSPosture("ConnectionString", pgxCfg.ConnConfig); err != nil {
+		return nil, err
 	}
 
 	// --- Pooler Detection ---
@@ -472,6 +467,12 @@ func Connect(ctx context.Context, cfg Config, opts ...Option) (*Pool, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Validate resolved DirectURL with the same TLS-only policy.
+	if err := validateResolvedDirectURL(directURL); err != nil {
+		return nil, err
+	}
+	// For Neon hostnames, explicit DirectURL that still points to a pooled
+	// endpoint is rejected to preserve the direct-only migrations invariant.
 
 	// --- Connection Limits ---
 	if cfg.MaxConns > 0 {
@@ -483,7 +484,9 @@ func Connect(ctx context.Context, cfg Config, opts ...Option) (*Pool, error) {
 
 	// --- Pool Lifecycle ---
 	if cfg.HealthChecksDisabled {
-		pgxCfg.HealthCheckPeriod = 0
+		// pgxpool panics if HealthCheckPeriod <= 0 (ticker interval).
+		// Use a very large positive interval to effectively disable checks.
+		pgxCfg.HealthCheckPeriod = 100 * 365 * 24 * time.Hour
 	} else if cfg.HealthCheckPeriod > 0 {
 		pgxCfg.HealthCheckPeriod = cfg.HealthCheckPeriod
 	} else {
@@ -1232,7 +1235,7 @@ Obtain both from: **Neon Console → Project → Dashboard → Connect** (select
 
 If you provide only `DATABASE_URL` with a pooled connection string, the `vango-neon` package auto-derives the direct URL by removing `-pooler` from the hostname. This derivation is applied only for Neon hostnames (`*.neon.tech`); non-Neon hostnames are never rewritten.
 
-**Security defaults:** the recommended connection string includes `sslmode=require&channel_binding=require`. For additional hardening in production, upgrade to `sslmode=verify-full` (requires the Neon CA certificate). The package rejects any connection string that would result in plaintext connections.
+**Security defaults:** the recommended connection string includes `sslmode=require&channel_binding=require`. For additional hardening in production, upgrade to `sslmode=verify-full` (requires the Neon CA certificate). The package rejects plaintext-capable configurations for both `ConnectionString` and `DirectURL`.
 
 **Compatibility note:** if you encounter connection issues in a constrained environment, remove `channel_binding=require` first and keep `sslmode=require` (or stricter). `channel_binding` is hardening, not the TLS requirement.
 

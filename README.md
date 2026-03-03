@@ -57,6 +57,11 @@ If `DirectURL` is empty and `ConnectionString` is a Neon pooled URL in URL form,
 `vango-neon` derives the direct URL by removing `-pooler` from the first hostname
 label. Non-Neon hostnames are never rewritten.
 
+`Connect` validates TLS posture for both `ConnectionString` and `DirectURL`.
+`DirectURL` must use `sslmode=require` (or stricter) and must not allow
+plaintext fallback modes (`sslmode=allow` / `sslmode=prefer` semantics).
+For Neon hostnames, explicit `DirectURL` must be non-pooled (`-pooler` is rejected).
+
 Compatibility note: if you encounter connection issues in a constrained
 environment, remove `channel_binding=require` first and keep
 `sslmode=require` (or stricter). Channel binding is hardening; TLS is the
@@ -106,6 +111,12 @@ _ = directURL
 
 `Pool.DirectURL()` contains credentials. Treat it as secret material and never
 log it.
+
+## Health-check disabled mode
+
+`HealthChecksDisabled=true` is supported and keeps `HealthCheckPeriod` ignored.
+Internally, `Connect` uses a very large positive interval instead of `0`, since
+pgxpool panics on non-positive ticker intervals.
 
 ## Health checks
 
@@ -195,8 +206,8 @@ CI:
 
 ## Security posture
 
-- `Connect` rejects plaintext-capable TLS modes (`sslmode=allow` / `sslmode=prefer`).
-- `Connect` requires TLS (`sslmode=require` or stricter).
+- `Connect` rejects plaintext-capable TLS modes (`sslmode=allow` / `sslmode=prefer`) for both `ConnectionString` and `DirectURL`.
+- `Connect` requires TLS (`sslmode=require` or stricter) for both `ConnectionString` and `DirectURL`.
 - `channel_binding=require` is recommended hardening; remove it first if you
   hit connectivity issues, but keep `sslmode=require` (or stricter).
 - Public outer errors are safe to log by default and avoid credential-bearing DSN output.

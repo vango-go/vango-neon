@@ -96,6 +96,8 @@ If `DATABASE_URL_DIRECT` / `Config.DirectURL` is explicitly set, it is still
 validated under the same TLS-only rules before pool creation.
 For Neon hostnames, explicit `DATABASE_URL_DIRECT` must be non-pooled
 (`-pooler` endpoints fail fast).
+If `ForcePoolerMode=true` and `Config.DirectURL` is empty, `Connect` fails fast
+unless `DATABASE_URL` is a derivable Neon pooled URL.
 
 ---
 

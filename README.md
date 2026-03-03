@@ -61,6 +61,8 @@ label. Non-Neon hostnames are never rewritten.
 `DirectURL` must use `sslmode=require` (or stricter) and must not allow
 plaintext fallback modes (`sslmode=allow` / `sslmode=prefer` semantics).
 For Neon hostnames, explicit `DirectURL` must be non-pooled (`-pooler` is rejected).
+If `ForcePoolerMode=true` and `DirectURL` is empty, `Connect` fails fast unless
+`ConnectionString` is a derivable Neon pooled URL.
 
 Compatibility note: if you encounter connection issues in a constrained
 environment, remove `channel_binding=require` first and keep

@@ -62,6 +62,10 @@ type Config struct {
 	// ForcePoolerMode forces simple protocol (no prepared statements) and
 	// disables pgx statement/description caches, regardless of hostname
 	// detection.
+	//
+	// If true and DirectURL is empty, Connect requires ConnectionString to be
+	// a derivable Neon pooled URL (URL form, host ending in "-pooler...neon.tech");
+	// otherwise Connect fails fast and requires DirectURL explicitly.
 	// Default: false.
 	ForcePoolerMode bool
 

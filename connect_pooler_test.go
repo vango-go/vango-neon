@@ -56,6 +56,7 @@ func TestConnect_AppliesForcePoolerMode(t *testing.T) {
 	_, err := Connect(context.Background(), Config{
 		ConnectionString: "postgresql://user:pass@ep-demo.us-east-2.aws.neon.tech/neondb?sslmode=require",
 		ForcePoolerMode:  true,
+		DirectURL:        "postgresql://user:pass@ep-demo.us-east-2.aws.neon.tech/neondb?sslmode=require",
 	}, WithPgxConfig(func(c *pgxpool.Config) {
 		c.BeforeConnect = func(_ context.Context, cc *pgx.ConnConfig) error {
 			called = true

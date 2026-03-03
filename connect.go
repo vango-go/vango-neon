@@ -232,5 +232,11 @@ func resolveDirectURL(cfg Config, parsedHost string) (string, error) {
 		return u.String(), nil
 	}
 
+	if cfg.ForcePoolerMode {
+		return "", errors.New(
+			"neon: ForcePoolerMode=true requires Config.DirectURL unless ConnectionString is a derivable Neon pooled URL",
+		)
+	}
+
 	return cfg.ConnectionString, nil
 }

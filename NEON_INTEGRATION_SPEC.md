@@ -301,6 +301,10 @@ type Config struct {
 	// ForcePoolerMode forces simple protocol (no prepared statements),
 	// regardless of hostname detection.
 	// Default: false (auto-detection via hostname)
+	//
+	// If true and DirectURL is empty, ConnectionString must be a derivable
+	// Neon pooled URL (URL form with "-pooler" hostname label). Otherwise
+	// Connect fails fast and requires DirectURL explicitly.
 	ForcePoolerMode bool
 
 	// --- Pool Lifecycle (optional, with Neon-optimized defaults) ---
@@ -549,7 +553,9 @@ func Connect(ctx context.Context, cfg Config, opts ...Option) (*Pool, error) {
 //  2. If ConnectionString hostname matches Neon's pooled naming convention
 //     (first hostname label ends with "-pooler" and suffix is ".neon.tech"),
 //     derive direct URL by removing the "-pooler" suffix from the first label.
-//  3. Otherwise, use ConnectionString as-is (assumed to be direct already).
+//  3. If cfg.ForcePoolerMode=true and #2 did not apply, fail fast and require
+//     cfg.DirectURL explicitly.
+//  4. Otherwise, use ConnectionString as-is (assumed to be direct already).
 //
 // Non-Neon hostnames are NEVER rewritten.
 //
@@ -591,6 +597,12 @@ func resolveDirectURL(cfg Config, parsedHost string) (string, error) {
 		}
 
 		return u.String(), nil
+	}
+
+	if cfg.ForcePoolerMode {
+		return "", errors.New(
+			"neon: ForcePoolerMode=true requires Config.DirectURL unless ConnectionString is a derivable Neon pooled URL",
+		)
 	}
 
 	return cfg.ConnectionString, nil

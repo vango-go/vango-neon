@@ -9,7 +9,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/tracelog"
 )
 
@@ -63,23 +62,21 @@ func ExampleTestDB() {
 	// Output: 42 My Project
 }
 
-func ExampleWithPgxConfig_tracing() {
+func ExampleWithTracer_tracing() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	opt := WithPgxConfig(func(c *pgxpool.Config) {
-		c.ConnConfig.Tracer = &tracelog.TraceLog{
-			Logger: tracelog.LoggerFunc(func(ctx context.Context, level tracelog.LogLevel, msg string, data map[string]any) {
-				safe := make(map[string]any, len(data))
-				for k, v := range data {
-					if k == "sql" || k == "args" {
-						continue
-					}
-					safe[k] = v
+	opt := WithTracer(&tracelog.TraceLog{
+		Logger: tracelog.LoggerFunc(func(ctx context.Context, level tracelog.LogLevel, msg string, data map[string]any) {
+			safe := make(map[string]any, len(data))
+			for k, v := range data {
+				if k == "sql" || k == "args" {
+					continue
 				}
-				logger.InfoContext(ctx, msg, "pgx_level", level.String(), "pgx", safe)
-			}),
-			LogLevel: tracelog.LogLevelInfo,
-		}
+				safe[k] = v
+			}
+			logger.InfoContext(ctx, msg, "pgx_level", level.String(), "pgx", safe)
+		}),
+		LogLevel: tracelog.LogLevelInfo,
 	})
 
 	_ = opt

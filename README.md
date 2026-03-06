@@ -147,32 +147,34 @@ err := neon.WithTx(ctx, db, pgx.TxOptions{}, func(tx pgx.Tx) error {
 `WithTx` handles begin/commit/rollback and re-panics after rollback when the
 work function panics.
 
-## Tracing and advanced pgx configuration
+## Tracing and connection setup
 
-Use `WithPgxConfig` to attach pgx tracer hooks. Default posture should avoid
+Use `WithTracer` to attach pgx tracer hooks. Default posture should avoid
 logging SQL text and args because they may contain sensitive data.
 
 ```go
 logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-opt := neon.WithPgxConfig(func(c *pgxpool.Config) {
-	c.ConnConfig.Tracer = &tracelog.TraceLog{
-		Logger: tracelog.LoggerFunc(func(ctx context.Context, level tracelog.LogLevel, msg string, data map[string]any) {
-			safe := make(map[string]any, len(data))
-			for k, v := range data {
-				if k == "sql" || k == "args" {
-					continue
-				}
-				safe[k] = v
+opt := neon.WithTracer(&tracelog.TraceLog{
+	Logger: tracelog.LoggerFunc(func(ctx context.Context, level tracelog.LogLevel, msg string, data map[string]any) {
+		safe := make(map[string]any, len(data))
+		for k, v := range data {
+			if k == "sql" || k == "args" {
+				continue
 			}
-			logger.InfoContext(ctx, msg, "pgx_level", level.String(), "pgx", safe)
-		}),
-		LogLevel: tracelog.LogLevelInfo,
-	}
+			safe[k] = v
+		}
+		logger.InfoContext(ctx, msg, "pgx_level", level.String(), "pgx", safe)
+	}),
+	LogLevel: tracelog.LogLevelInfo,
 })
 
 _ = opt
 ```
+
+Use `WithAfterConnect` for safe per-connection setup such as type registration.
+Public options do not expose raw `pgxpool.Config` mutation, and `Connect`
+re-enforces TLS and pooler-mode invariants after all options are applied.
 
 ## Test kit
 

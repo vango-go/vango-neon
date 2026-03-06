@@ -10,30 +10,35 @@ import (
 )
 
 func TestConnect_AppliesPoolerModeByHostname(t *testing.T) {
-	t.Parallel()
-
-	errStop := errors.New("stop-before-connect")
+	errStop := errors.New("stop-before-pool")
 	var gotMode pgx.QueryExecMode
 	var gotStmtCache int
 	var gotDescCache int
 	var called bool
 
+	original := newPoolWithConfig
+	newPoolWithConfig = func(_ context.Context, cfg *pgxpool.Config) (*pgxpool.Pool, error) {
+		called = true
+		gotMode = cfg.ConnConfig.DefaultQueryExecMode
+		gotStmtCache = cfg.ConnConfig.StatementCacheCapacity
+		gotDescCache = cfg.ConnConfig.DescriptionCacheCapacity
+		return nil, errStop
+	}
+	t.Cleanup(func() {
+		newPoolWithConfig = original
+	})
+
 	_, err := Connect(context.Background(), Config{
 		ConnectionString: "postgresql://user:pass@ep-demo-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require",
-	}, WithPgxConfig(func(c *pgxpool.Config) {
-		c.BeforeConnect = func(_ context.Context, cc *pgx.ConnConfig) error {
-			called = true
-			gotMode = cc.DefaultQueryExecMode
-			gotStmtCache = cc.StatementCacheCapacity
-			gotDescCache = cc.DescriptionCacheCapacity
-			return errStop
-		}
-	}))
+	})
 	if err == nil {
 		t.Fatal("expected error")
 	}
+	if !errors.Is(err, errStop) {
+		t.Fatalf("expected constructor error, got %v", err)
+	}
 	if !called {
-		t.Fatal("expected BeforeConnect to be called")
+		t.Fatal("expected pool constructor to be called")
 	}
 	if gotMode != pgx.QueryExecModeSimpleProtocol {
 		t.Fatalf("mode=%v, want %v", gotMode, pgx.QueryExecModeSimpleProtocol)
@@ -47,28 +52,33 @@ func TestConnect_AppliesPoolerModeByHostname(t *testing.T) {
 }
 
 func TestConnect_AppliesForcePoolerMode(t *testing.T) {
-	t.Parallel()
-
-	errStop := errors.New("stop-before-connect")
+	errStop := errors.New("stop-before-pool")
 	var gotMode pgx.QueryExecMode
 	var called bool
+
+	original := newPoolWithConfig
+	newPoolWithConfig = func(_ context.Context, cfg *pgxpool.Config) (*pgxpool.Pool, error) {
+		called = true
+		gotMode = cfg.ConnConfig.DefaultQueryExecMode
+		return nil, errStop
+	}
+	t.Cleanup(func() {
+		newPoolWithConfig = original
+	})
 
 	_, err := Connect(context.Background(), Config{
 		ConnectionString: "postgresql://user:pass@ep-demo.us-east-2.aws.neon.tech/neondb?sslmode=require",
 		ForcePoolerMode:  true,
 		DirectURL:        "postgresql://user:pass@ep-demo.us-east-2.aws.neon.tech/neondb?sslmode=require",
-	}, WithPgxConfig(func(c *pgxpool.Config) {
-		c.BeforeConnect = func(_ context.Context, cc *pgx.ConnConfig) error {
-			called = true
-			gotMode = cc.DefaultQueryExecMode
-			return errStop
-		}
-	}))
+	})
 	if err == nil {
 		t.Fatal("expected error")
 	}
+	if !errors.Is(err, errStop) {
+		t.Fatalf("expected constructor error, got %v", err)
+	}
 	if !called {
-		t.Fatal("expected BeforeConnect to be called")
+		t.Fatal("expected pool constructor to be called")
 	}
 	if gotMode != pgx.QueryExecModeSimpleProtocol {
 		t.Fatalf("mode=%v, want %v", gotMode, pgx.QueryExecModeSimpleProtocol)
@@ -76,36 +86,41 @@ func TestConnect_AppliesForcePoolerMode(t *testing.T) {
 }
 
 func TestConnect_DoesNotUsePortHeuristic(t *testing.T) {
-	t.Parallel()
-
 	conn := "postgresql://user:pass@ep-demo.us-east-2.aws.neon.tech:6543/neondb?sslmode=require"
 	baseline, err := pgxpool.ParseConfig(conn)
 	if err != nil {
 		t.Fatalf("parse config: %v", err)
 	}
 
-	errStop := errors.New("stop-before-connect")
+	errStop := errors.New("stop-before-pool")
 	var gotMode pgx.QueryExecMode
 	var gotStmtCache int
 	var gotDescCache int
 	var called bool
 
+	original := newPoolWithConfig
+	newPoolWithConfig = func(_ context.Context, cfg *pgxpool.Config) (*pgxpool.Pool, error) {
+		called = true
+		gotMode = cfg.ConnConfig.DefaultQueryExecMode
+		gotStmtCache = cfg.ConnConfig.StatementCacheCapacity
+		gotDescCache = cfg.ConnConfig.DescriptionCacheCapacity
+		return nil, errStop
+	}
+	t.Cleanup(func() {
+		newPoolWithConfig = original
+	})
+
 	_, err = Connect(context.Background(), Config{
 		ConnectionString: conn,
-	}, WithPgxConfig(func(c *pgxpool.Config) {
-		c.BeforeConnect = func(_ context.Context, cc *pgx.ConnConfig) error {
-			called = true
-			gotMode = cc.DefaultQueryExecMode
-			gotStmtCache = cc.StatementCacheCapacity
-			gotDescCache = cc.DescriptionCacheCapacity
-			return errStop
-		}
-	}))
+	})
 	if err == nil {
 		t.Fatal("expected error")
 	}
+	if !errors.Is(err, errStop) {
+		t.Fatalf("expected constructor error, got %v", err)
+	}
 	if !called {
-		t.Fatal("expected BeforeConnect to be called")
+		t.Fatal("expected pool constructor to be called")
 	}
 	if gotMode != baseline.ConnConfig.DefaultQueryExecMode {
 		t.Fatalf("mode=%v, want baseline %v", gotMode, baseline.ConnConfig.DefaultQueryExecMode)

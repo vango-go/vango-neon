@@ -159,6 +159,10 @@ Minimum accepted posture is TLS-required (`sslmode=require` or stricter). Any
 additional hardening parameters (for example `channel_binding=require`) MUST
 have a documented fallback path.
 
+`vango-neon` MUST enforce I3 and I5 after all public `Connect` options are
+applied. Public options may extend tracing and post-connect setup, but they may
+not weaken TLS posture or pooler-mode determinism.
+
 ---
 
 # Part 1: The `vango-neon` Package Specification
@@ -364,25 +368,40 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Option configures Connect for advanced use cases (tracing, type
-// registrations, hooks).
+// Option configures Connect for safe extension points such as tracing and
+// post-connect setup.
 type Option func(*connectOptions)
 
 type connectOptions struct {
-	pgxConfigModifier func(*pgxpool.Config)
+	tracer        pgx.QueryTracer
+	afterConnects []func(context.Context, *pgx.Conn) error
 }
 
-// WithPgxConfig allows low-level pgxpool configuration for advanced use
-// cases: custom tracers, custom type registrations, AfterConnect hooks.
+// WithTracer attaches a pgx tracer to all new connections created by the pool.
 //
-// The modifier runs AFTER all standard configuration (TLS, pooler mode,
-// limits, lifecycle) has been applied, so it can override any default.
-//
-// Use sparingly. The modifier receives the full pgxpool.Config; changes
-// are your responsibility and may break Neon compatibility guarantees.
-func WithPgxConfig(fn func(*pgxpool.Config)) Option {
+// The tracer is applied after vango-neon has configured the connection and
+// cannot override TLS or pooler-mode invariants. When multiple tracers are
+// provided, the last one wins.
+func WithTracer(tracer pgx.QueryTracer) Option {
 	return func(o *connectOptions) {
-		o.pgxConfigModifier = fn
+		if tracer == nil {
+			return
+		}
+		o.tracer = tracer
+	}
+}
+
+// WithAfterConnect registers a callback that runs after each new connection is
+// established and before it is added to the pool.
+//
+// Use this for safe connection setup such as type registration. Callbacks run
+// in registration order and stop on the first error. Nil callbacks are ignored.
+func WithAfterConnect(fn func(context.Context, *pgx.Conn) error) Option {
+	return func(o *connectOptions) {
+		if fn == nil {
+			return
+		}
+		o.afterConnects = append(o.afterConnects, fn)
 	}
 }
 
@@ -1175,28 +1194,26 @@ import (
 // `github.com/jackc/pgx/v5/tracelog` provides TraceLog: a ready-made tracer
 // that logs query start/end events to your logger.
 //
-// Configure tracing via neon.WithPgxConfig so the rest of the application
-// continues to depend only on neon.DB (not *pgxpool.Pool).
+// Configure tracing via neon.WithTracer so the rest of the application
+// continues to depend only on neon.DB (not *neon.Pool).
 func ConnectWithTracing(ctx context.Context, logger *slog.Logger) (*neon.Pool, error) {
 	return neon.Connect(ctx, neon.Config{
 		ConnectionString: os.Getenv("DATABASE_URL"),
 		DirectURL:        os.Getenv("DATABASE_URL_DIRECT"),
-	}, neon.WithPgxConfig(func(c *pgxpool.Config) {
-		c.ConnConfig.Tracer = &tracelog.TraceLog{
-			Logger: tracelog.LoggerFunc(func(ctx context.Context, level tracelog.LogLevel, msg string, data map[string]any) {
-				// IMPORTANT: Decide what to log. SQL text and args may contain PII.
-				// Default posture: drop `sql` and `args`.
-				safe := make(map[string]any, len(data))
-				for k, v := range data {
-					if k == "sql" || k == "args" {
-						continue
-					}
-					safe[k] = v
+	}, neon.WithTracer(&tracelog.TraceLog{
+		Logger: tracelog.LoggerFunc(func(ctx context.Context, level tracelog.LogLevel, msg string, data map[string]any) {
+			// IMPORTANT: Decide what to log. SQL text and args may contain PII.
+			// Default posture: drop `sql` and `args`.
+			safe := make(map[string]any, len(data))
+			for k, v := range data {
+				if k == "sql" || k == "args" {
+					continue
 				}
-				logger.Log(ctx, slog.LevelInfo, msg, "pgx_level", level.String(), "pgx", safe)
-			}),
-			LogLevel: tracelog.LogLevelInfo,
-		}
+				safe[k] = v
+			}
+			logger.Log(ctx, slog.LevelInfo, msg, "pgx_level", level.String(), "pgx", safe)
+		}),
+		LogLevel: tracelog.LogLevelInfo,
 	}))
 }
 ```
@@ -1874,11 +1891,13 @@ jobs:
             --project-id $NEON_PROJECT_ID \
             --role-name neondb_owner \
             --pooled 2>/dev/null)
+          echo "::add-mask::$CS"
           echo "DATABASE_URL=$CS" >> $GITHUB_ENV
 
           CS_DIRECT=$(neon connection-string $BRANCH \
             --project-id $NEON_PROJECT_ID \
             --role-name neondb_owner 2>/dev/null)
+          echo "::add-mask::$CS_DIRECT"
           echo "DATABASE_URL_DIRECT=$CS_DIRECT" >> $GITHUB_ENV
 
       - name: Run migrations (direct URL)
@@ -1910,7 +1929,7 @@ jobs:
             --project-id $NEON_PROJECT_ID 2>/dev/null || true
 ```
 
-**Secrets hygiene:** Connection strings are piped directly to `$GITHUB_ENV` without echoing. `2>/dev/null` suppresses stderr that might contain connection details. The branch creation JSON is written to `/tmp`, not logged.
+**Secrets hygiene:** Connection strings are piped directly to `$GITHUB_ENV` without echoing. `::add-mask::` is applied before export so accidental workflow echoes are redacted. `2>/dev/null` suppresses stderr that might contain connection details. The branch creation JSON is written to `/tmp`, not logged.
 
 ---
 
@@ -1974,13 +1993,13 @@ When `vango.json` has `"neon": { "enabled": true }`, `vango dev` performs an inf
 To eliminate the hard dependency on `neonctl` (Node/npm), Vango will add native `vango neon` subcommands implemented in Go using Neon's HTTP API:
 
 ```bash
-vango neon branch create feature/login    # Creates branch, outputs redacted summary
-vango neon branch list                     # Lists branches
-vango neon branch delete feature/login     # Deletes branch
-vango neon connect --branch main --pooled  # Outputs connection string to .env
+vango neon branch create feature/login --json
+vango neon branch list --json
+vango neon branch delete feature/login --json
+vango neon connect --branch main --json
 ```
 
-These commands use `NEON_API_KEY` for authentication and require no external dependencies. `neonctl` remains documented as an alternative, but Vango's critical path becomes a single Go binary.
+These commands use `NEON_API_KEY` for authentication and require no external dependencies. Native `vango neon` JSON output is always redacted and never includes DSNs; `vango neon connect` writes secrets to `.env` and emits only host/database summaries. `neonctl` remains documented as an alternative, but Vango's critical path becomes a single Go binary.
 
 ---
 
@@ -2041,7 +2060,10 @@ The `vango-neon` package rejects connections without TLS. Scaffold templates def
 
 ## G.5 Neon CLI Reference (Agent-Oriented)
 
-All commands support `--output json` for non-interactive, machine-parseable output. Connection strings returned by the CLI contain passwords — treat all output as secret material.
+Distinguish the two CLIs:
+
+- **Native `vango neon`** uses `--json` for machine-readable output. Its JSON is redacted by design and never includes DSNs.
+- **External `neon` / `neonctl`** uses `--output json`. Treat that JSON as potentially secret-bearing and do not log it.
 
 ### G.5.1 Authentication
 

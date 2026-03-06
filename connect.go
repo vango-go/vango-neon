@@ -25,19 +25,82 @@ const (
 type Option func(*connectOptions)
 
 type connectOptions struct {
-	pgxConfigModifier func(*pgxpool.Config)
+	tracer        pgx.QueryTracer
+	afterConnects []func(context.Context, *pgx.Conn) error
 }
 
 // newPoolWithConfig is a package-private seam used by tests to force
 // deterministic pool-construction failures without network dependencies.
 var newPoolWithConfig = pgxpool.NewWithConfig
 
-// WithPgxConfig allows low-level pgxpool configuration.
+// poolPing is a package-private seam used by tests to force deterministic
+// ping failures without opening a real database connection.
+var poolPing = func(ctx context.Context, pool *pgxpool.Pool) error {
+	return pool.Ping(ctx)
+}
+
+// closePool is a package-private seam used by tests to avoid relying on the
+// behavior of a zero-value pgxpool.Pool during ping-failure cleanup.
+var closePool = func(pool *pgxpool.Pool) {
+	pool.Close()
+}
+
+// WithTracer attaches a pgx tracer to all new connections created by the pool.
 //
-// The modifier runs after standard vango-neon configuration is applied.
-func WithPgxConfig(fn func(*pgxpool.Config)) Option {
+// The tracer is applied after vango-neon has configured the connection and
+// cannot override TLS or pooler-mode invariants. When multiple tracers are
+// provided, the last one wins.
+func WithTracer(tracer pgx.QueryTracer) Option {
 	return func(o *connectOptions) {
-		o.pgxConfigModifier = fn
+		if tracer == nil {
+			return
+		}
+		o.tracer = tracer
+	}
+}
+
+// WithAfterConnect registers a callback that runs after each new connection is
+// established and before it is added to the pool.
+//
+// Use this for safe connection setup such as type registration. Callbacks run
+// in registration order and stop on the first error. Nil callbacks are ignored.
+func WithAfterConnect(fn func(context.Context, *pgx.Conn) error) Option {
+	return func(o *connectOptions) {
+		if fn == nil {
+			return
+		}
+		o.afterConnects = append(o.afterConnects, fn)
+	}
+}
+
+func applyPoolerModeInvariants(connCfg *pgx.ConnConfig) {
+	connCfg.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+	connCfg.StatementCacheCapacity = 0
+	connCfg.DescriptionCacheCapacity = 0
+}
+
+func applyConnectOptions(pgxCfg *pgxpool.Config, opts connectOptions) {
+	if opts.tracer != nil {
+		pgxCfg.ConnConfig.Tracer = opts.tracer
+	}
+
+	if len(opts.afterConnects) == 0 {
+		return
+	}
+
+	existingAfterConnect := pgxCfg.AfterConnect
+	pgxCfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		if existingAfterConnect != nil {
+			if err := existingAfterConnect(ctx, conn); err != nil {
+				return err
+			}
+		}
+		for _, fn := range opts.afterConnects {
+			if err := fn(ctx, conn); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 }
 
@@ -50,6 +113,16 @@ func isNeonPoolerHost(host string) bool {
 		return false
 	}
 	return strings.HasSuffix(firstLabel, "-pooler")
+}
+
+func enforceConnectionInvariants(connCfg *pgx.ConnConfig, isPooler bool) error {
+	if err := validateTLSPosture("ConnectionString", connCfg); err != nil {
+		return err
+	}
+	if isPooler {
+		applyPoolerModeInvariants(connCfg)
+	}
+	return nil
 }
 
 func validateTLSPosture(source string, connCfg *pgx.ConnConfig) error {
@@ -112,11 +185,6 @@ func Connect(ctx context.Context, cfg Config, opts ...Option) (*Pool, error) {
 
 	parsedHost := pgxCfg.ConnConfig.Host
 	isPooler := cfg.ForcePoolerMode || isNeonPoolerHost(parsedHost)
-	if isPooler {
-		pgxCfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
-		pgxCfg.ConnConfig.StatementCacheCapacity = 0
-		pgxCfg.ConnConfig.DescriptionCacheCapacity = 0
-	}
 
 	directURL, err := resolveDirectURL(cfg, parsedHost)
 	if err != nil {
@@ -162,6 +230,10 @@ func Connect(ctx context.Context, cfg Config, opts ...Option) (*Pool, error) {
 		pgxCfg.ConnConfig.ConnectTimeout = defaultConnectTimeout
 	}
 
+	if isPooler {
+		applyPoolerModeInvariants(pgxCfg.ConnConfig)
+	}
+
 	var o connectOptions
 	for _, opt := range opts {
 		if opt == nil {
@@ -169,8 +241,11 @@ func Connect(ctx context.Context, cfg Config, opts ...Option) (*Pool, error) {
 		}
 		opt(&o)
 	}
-	if o.pgxConfigModifier != nil {
-		o.pgxConfigModifier(pgxCfg)
+
+	applyConnectOptions(pgxCfg, o)
+
+	if err := enforceConnectionInvariants(pgxCfg.ConnConfig, isPooler); err != nil {
+		return nil, err
 	}
 
 	effectiveHost := pgxCfg.ConnConfig.Host
@@ -184,8 +259,8 @@ func Connect(ctx context.Context, cfg Config, opts ...Option) (*Pool, error) {
 		}
 	}
 
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
+	if err := poolPing(ctx, pool); err != nil {
+		closePool(pool)
 		return nil, &SafeError{
 			msg:   fmt.Sprintf("neon: initial ping failed (host=%s, is your Neon compute active?)", effectiveHost),
 			cause: err,

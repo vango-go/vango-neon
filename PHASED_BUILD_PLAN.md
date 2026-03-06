@@ -20,7 +20,7 @@ This plan is intentionally “maximally thorough”: it includes repository scaf
 - Implement the **full public API** specified in `NEON_INTEGRATION_SPEC.md`:
   - `neon.DB` interface
   - `neon.Config`
-  - `neon.Pool` + `neon.Connect` + options (`WithPgxConfig`)
+  - `neon.Pool` + `neon.Connect` + safe options (`WithTracer`, `WithAfterConnect`)
   - `neon.SafeError`
   - Helpers: `neon.HealthCheck`, `neon.WithTx`
   - Test kit: `neon.TestDB`, `neon.ErrRow`, `neon.ErrRows`, `neon.NewRow`, `neon.RowsBuilder` (+ backing fake rows)
@@ -123,7 +123,7 @@ Implement the following in package `neon`:
   - implements `DB` methods
 - `type SafeError struct { msg string; cause error }` with `Error()` safe and `Unwrap()` preserving cause
 - `Connect(ctx, cfg, ...Option) (*Pool, error)`
-  - Options include `WithPgxConfig(func(*pgxpool.Config))`
+  - Options include `WithTracer(pgx.QueryTracer)` and `WithAfterConnect(func(context.Context, *pgx.Conn) error)`
 - Helpers:
   - `HealthCheck(ctx, db) (*HealthStatus, error)`
   - `WithTx(ctx, db, opts, fn) error` with rollback-on-error/panic semantics
@@ -142,7 +142,7 @@ This is the highest-leverage way to avoid “big bang” integration bugs and ke
      - invalid DSN safe error
      - sslmode rejection cases
      - pooled→direct derivation behavior (no rewriting for non-Neon)
-     - pooler mode config clamps (observed via `WithPgxConfig`)
+     - pooler mode config clamps (observed via the `newPoolWithConfig` seam)
 3. **PR C — SafeError + error redaction proofs (invariant I4)**
    - Ensure all returned errors are safe to log by default
    - Add tests explicitly scanning `err.Error()` for DSN substrings/heuristics
@@ -182,7 +182,8 @@ Keep files small and “single-purpose”; suggested structure:
 `connect.go`
 - `type Option`
 - `type connectOptions`
-- `func WithPgxConfig(fn func(*pgxpool.Config)) Option`
+- `func WithTracer(tracer pgx.QueryTracer) Option`
+- `func WithAfterConnect(fn func(context.Context, *pgx.Conn) error) Option`
 - `func Connect(ctx context.Context, cfg Config, opts ...Option) (*Pool, error)`
 - `func resolveDirectURL(cfg Config, parsedHost string) (string, error)`
 - `func isNeonPoolerHost(host string) bool`
@@ -292,9 +293,9 @@ If these helpers are added, they should remain package-private and be tested thr
 - **`DirectURL` provided but invalid**:
   - Connect may still succeed for app pool creation; migration failures are surfaced where direct URL is consumed.
   - Document this explicitly to avoid false confidence.
-- **`WithPgxConfig` overrides safe defaults**:
-  - Allowed by design.
-  - README must call out that override responsibility transfers to caller.
+- **Public options must not override safe defaults**:
+  - TLS-only and pooler-mode invariants are re-enforced after all options are applied.
+  - Raw `pgxpool.Config` mutation is intentionally not part of the public API.
 - **Ping failure after pool creation**:
   - Always close pool before returning error.
   - Error remains safe; underlying cause preserved.
@@ -302,7 +303,7 @@ If these helpers are added, they should remain package-private and be tested thr
 ### 2.6 Observability integration contract
 
 - `vango-neon` does not ship its own logging framework.
-- Tracing is injected through pgx tracer hooks using `WithPgxConfig`.
+- Tracing is injected through pgx tracer hooks using `WithTracer`.
 - Examples must demonstrate redaction posture:
   - drop `sql` and `args` by default
   - include safe metadata (duration, command tag class, etc.)
@@ -354,8 +355,8 @@ Add focused, behavior-driven tests that do not require a real database:
   - `DefaultQueryExecMode` simple protocol
   - caches set to 0
 - For non-pooler hosts, defaults remain untouched unless `ForcePoolerMode=true`.
-- Implementation detail for testability: use `WithPgxConfig` in tests to *observe* final `pgxpool.Config` just before pool creation.
-- Add a test proving ordering: `WithPgxConfig` runs after defaults and can override the default pooler-mode clamps (caller responsibility).
+- Implementation detail for testability: observe final `pgxpool.Config` via the `newPoolWithConfig` seam just before pool creation.
+- Add tests proving final invariant enforcement: pooler-mode clamps remain applied and TLS posture is still validated after options are processed.
 
 **Direct URL resolution (I2)**
 - If `DirectURL` provided, use verbatim.
@@ -448,7 +449,7 @@ This section is the “audit trail”: it should be possible to read the spec in
   - Public API proof: `Pool.DirectURL()` exists and returns the resolved direct DSN (documented as secret)
 - **I3 Pooler-mode determinism**
   - Tests: pooler detection by hostname (no port heuristics), `ForcePoolerMode` override
-  - Observation mechanism: assert final `pgxpool.Config` values via `WithPgxConfig`
+  - Observation mechanism: assert final `pgxpool.Config` values via `newPoolWithConfig`
 - **I4 Secrets & error-safety**
   - Tests:
     - invalid DSN parse path returns generic safe error message
@@ -477,7 +478,7 @@ This section is the “audit trail”: it should be possible to read the spec in
   - wiring `neon.DB` into app dependencies
   - `neon.HealthCheck`
   - `neon.WithTx`
-  - using `WithPgxConfig` for tracing while suppressing SQL/args
+  - using `WithTracer` for tracing while suppressing SQL/args
 
 ### Exit criteria
 - A developer can adopt the package by following the README without reading the full spec (but the spec remains authoritative).

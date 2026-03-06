@@ -277,13 +277,14 @@ When `Connect` determines you’re using a Neon pooler endpoint (or you set `For
 
 This prevents prepared-statement and statement-cache behavior from being proxy-dependent.
 
-If you need to attach tracing/logging, use `WithPgxConfig`—but avoid compatibility-breaking overrides unless you fully understand the consequences.
+If you need to attach tracing/logging, use `WithTracer`. For per-connection
+setup such as type registration, use `WithAfterConnect`.
 
 ---
 
 ## Tracing and observability
 
-Attach pgx tracing/logging via `WithPgxConfig`. Default posture should avoid logging:
+Attach pgx tracing/logging via `WithTracer`. Default posture should avoid logging:
 
 - raw SQL text (may contain sensitive information), and
 - args/params (often contain user data).
@@ -291,10 +292,12 @@ Attach pgx tracing/logging via `WithPgxConfig`. Default posture should avoid log
 Example pattern (redact SQL/args):
 
 ```go
-pool, err := neon.Connect(ctx, neon.Config{ConnectionString: pooled, DirectURL: direct}, neon.WithPgxConfig(func(c *pgxpool.Config) {
-	// Attach tracer/logger here. Ensure your logger does not emit SQL or args by default.
-}))
+pool, err := neon.Connect(ctx, neon.Config{ConnectionString: pooled, DirectURL: direct}, neon.WithTracer(myTracer))
 ```
+
+`Connect` re-enforces TLS-only and pooler-mode invariants after all public
+options are applied, so these hooks cannot re-enable prepared-statement caches
+or weaken TLS posture.
 
 For operational visibility, the concrete `*neon.Pool` exposes `pool.Stat()` (not part of `neon.DB`).
 
@@ -355,13 +358,15 @@ Optional environment variables used by the CLI:
 Common commands:
 
 ```bash
-vango neon branch list
-vango neon branch create feature/login
-vango neon branch delete feature/login
-vango neon connect --branch main
+vango neon branch list --json
+vango neon branch create feature/login --json
+vango neon branch delete feature/login --json
+vango neon connect --branch main --json
 ```
 
-`vango neon connect` writes pooled+direct DSNs to `.env` and prints **redacted** host/db summaries only.
+`vango neon connect` writes pooled+direct DSNs to `.env` and emits only
+**redacted** host/db summaries. When `--json` is used, the JSON payload is also
+redacted and never includes DSNs.
 
 ---
 

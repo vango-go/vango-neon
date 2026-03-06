@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -58,7 +57,7 @@ func TestConnect_PoolCreationFailure_UsesEffectiveHostInSafeError(t *testing.T) 
 
 	original := newPoolWithConfig
 	newPoolWithConfig = func(_ context.Context, cfg *pgxpool.Config) (*pgxpool.Pool, error) {
-		if got, want := cfg.ConnConfig.Host, "override.example.com"; got != want {
+		if got, want := cfg.ConnConfig.Host, "ep-demo.us-east-2.aws.neon.tech"; got != want {
 			t.Fatalf("pool construction saw host=%q, want %q", got, want)
 		}
 		return nil, cause
@@ -69,14 +68,12 @@ func TestConnect_PoolCreationFailure_UsesEffectiveHostInSafeError(t *testing.T) 
 
 	_, err := Connect(context.Background(), Config{
 		ConnectionString: "postgresql://user:pass@ep-demo.us-east-2.aws.neon.tech/neondb?sslmode=require",
-	}, WithPgxConfig(func(c *pgxpool.Config) {
-		c.ConnConfig.Host = "override.example.com"
-	}))
+	})
 	if err == nil {
 		t.Fatal("expected error")
 	}
 
-	if !strings.Contains(err.Error(), "neon: failed to create pool (host=override.example.com)") {
+	if !strings.Contains(err.Error(), "neon: failed to create pool (host=ep-demo.us-east-2.aws.neon.tech)") {
 		t.Fatalf("unexpected outer error: %q", err.Error())
 	}
 	assertSafeErrorWraps(t, err, cause)
@@ -84,17 +81,27 @@ func TestConnect_PoolCreationFailure_UsesEffectiveHostInSafeError(t *testing.T) 
 }
 
 func TestConnect_PingFailure_ReturnsSafeErrorAndWrapsCause(t *testing.T) {
-	t.Parallel()
-
 	cause := errors.New("dial failed for postgresql://user:supersecret@bad.example.com/neondb")
+
+	originalNewPool := newPoolWithConfig
+	originalPoolPing := poolPing
+	originalClosePool := closePool
+	newPoolWithConfig = func(_ context.Context, _ *pgxpool.Config) (*pgxpool.Pool, error) {
+		return &pgxpool.Pool{}, nil
+	}
+	poolPing = func(context.Context, *pgxpool.Pool) error {
+		return cause
+	}
+	closePool = func(*pgxpool.Pool) {}
+	t.Cleanup(func() {
+		newPoolWithConfig = originalNewPool
+		poolPing = originalPoolPing
+		closePool = originalClosePool
+	})
 
 	_, err := Connect(context.Background(), Config{
 		ConnectionString: "postgresql://user:supersecret@ep-demo-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require",
-	}, WithPgxConfig(func(c *pgxpool.Config) {
-		c.BeforeConnect = func(_ context.Context, _ *pgx.ConnConfig) error {
-			return cause
-		}
-	}))
+	})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -107,23 +114,32 @@ func TestConnect_PingFailure_ReturnsSafeErrorAndWrapsCause(t *testing.T) {
 }
 
 func TestConnect_PingFailure_UsesEffectiveHostInSafeError(t *testing.T) {
-	t.Parallel()
-
 	cause := errors.New("dial failed for postgresql://user:supersecret@bad.example.com/neondb")
+
+	originalNewPool := newPoolWithConfig
+	originalPoolPing := poolPing
+	originalClosePool := closePool
+	newPoolWithConfig = func(_ context.Context, _ *pgxpool.Config) (*pgxpool.Pool, error) {
+		return &pgxpool.Pool{}, nil
+	}
+	poolPing = func(context.Context, *pgxpool.Pool) error {
+		return cause
+	}
+	closePool = func(*pgxpool.Pool) {}
+	t.Cleanup(func() {
+		newPoolWithConfig = originalNewPool
+		poolPing = originalPoolPing
+		closePool = originalClosePool
+	})
 
 	_, err := Connect(context.Background(), Config{
 		ConnectionString: "postgresql://user:supersecret@ep-demo-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require",
-	}, WithPgxConfig(func(c *pgxpool.Config) {
-		c.ConnConfig.Host = "override.example.com"
-		c.BeforeConnect = func(_ context.Context, _ *pgx.ConnConfig) error {
-			return cause
-		}
-	}))
+	})
 	if err == nil {
 		t.Fatal("expected error")
 	}
 
-	if !strings.Contains(err.Error(), "neon: initial ping failed (host=override.example.com") {
+	if !strings.Contains(err.Error(), "neon: initial ping failed (host=ep-demo-pooler.us-east-2.aws.neon.tech") {
 		t.Fatalf("unexpected outer error: %q", err.Error())
 	}
 	assertSafeErrorWraps(t, err, cause)
